@@ -1,0 +1,6 @@
+*.pyc
+__pycache__/
+
+# Project dirs
+logs/
+reports/
