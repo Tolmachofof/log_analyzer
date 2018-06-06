@@ -15,8 +15,8 @@ CONFIG = {
     'LOG_DATE_FORMAT': '%Y%m%d',
     'REPORTS_DIR': './reports',
     'REPORT_NAME_TEMPLATE': 'report-{date}.html',
-    'REPORT_DATE_FORMAT': '%%Y.%%m.%%d',
-    'REPORT_TEMPLATE': './template.html',
+    'REPORT_DATE_FORMAT': '%Y.%m.%d',
+    'REPORT_TEMPLATE': './report.html',
     'REPORT_SIZE': 100,
     'REPORT_ACCURACY': 2,
     'ERRORS_PERCENT_LIMIT': 0,
@@ -97,6 +97,7 @@ def _fetch_date_from_file_name(file_name, template, date_format):
 
 
 def get_last_log(logs_dir, log_template, date_format):
+    logging.info('Find late log in directory: {}'.format(logs_dir))
     try:
         logs_in_directory = (
             LogEntry(
@@ -120,6 +121,7 @@ def get_last_log(logs_dir, log_template, date_format):
 
 
 def read_file(path):
+    logging.info('Read file: {}'.format(path))
     fopen = gzip.open if path.endswith('.gz') else open
     with fopen(path, 'rb') as f:
         for line in f:
@@ -135,18 +137,21 @@ def parse_line(line, pattern):
 
 
 def summarize_report(
-        report, total_requests, total_requests_time, size, accuracy
+    report, total_requests, total_requests_time, size, accuracy
 ):
-    print(type(report))
-    for url_report in sorted(report, key=lambda item: item['time_sum'])[size]:
+    top_reports_size = size if size < len(report) else len(report)
+    top_reports = sorted(
+        report.values(), key=lambda item: item['time_sum']
+    )[:top_reports_size]
+    for url_report in top_reports:
         url_requests = url_report.pop('requests')
         url_report.update(
             **{
                 'count_perc': round(
-                    100 * url_requests['count'] / total_requests, accuracy
+                    100 * url_report['count'] / total_requests, accuracy
                 ),
                 'time_perc': round(
-                    100 * url_requests['time_sum'] / total_requests_time,
+                    100 * url_report['time_sum'] / total_requests_time,
                     accuracy
                 ),
                 'time_avg': round(
@@ -156,7 +161,7 @@ def summarize_report(
                 'time_med': median(url_requests),
             }
         )
-    return report
+    return top_reports
 
 
 def create_report(file_path, pattern, report_size, accuracy):
@@ -172,11 +177,13 @@ def create_report(file_path, pattern, report_size, accuracy):
         except (ValueError, KeyError):
             total_errors += 1
             break
+        if 'url' and 'requests' not in report[url]:
+            report[url]['url'], report[url]['requests'] = url, []
         report[url]['count'] += 1
         report[url]['time_sum'] = round(
             report[url]['time_sum'] + request_time, accuracy
         )
-        report.setdefault('requests', []).append(request_time)
+        report[url]['requests'].append(request_time)
         total_requests_time = round(
             total_requests_time + request_time, accuracy
         )
@@ -190,11 +197,12 @@ def create_report(file_path, pattern, report_size, accuracy):
 def render_report(report, report_path, template_path):
     with open(template_path, 'r') as tp, open(report_path, 'w') as rp:
         template = tp.read()
-        template = template.replace('$table_json', report)
-        rp.write(template.format(json.dumps(report)))
+        template = template.replace('$table_json', json.dumps(report))
+        rp.write(template)
 
 
 def main(config):
+    logging.info('Starting app.')
     log_for_analyze = get_last_log(
         config['LOGS_DIR'], config['LOG_NAME_TEMPLATE'],
         config['LOG_DATE_FORMAT']
@@ -218,12 +226,7 @@ def main(config):
         int(config['REPORT_ACCURACY'])
     )
     errors_percent = round(100 * report.total_errors / report.total_requests)
-    if errors_percent < config['ERRORS_LIMIT']:
-        render_report(
-            report, os.path.join(config['REPORTS_DIR'], report_name),
-            config['REPORT_TEMPLATE_PATH']
-        )
-    else:
+    if errors_percent > config['ERRORS_PERCENT_LIMIT'] > 0:
         logging.error(
             (
                 'The {total_errors} errors was occurred at report creation. '
@@ -234,6 +237,11 @@ def main(config):
                 errors_percent=errors_percent,
                 file=log_for_analyze.log_name
             )
+        )
+    else:
+        render_report(
+            report.report, os.path.join(config['REPORTS_DIR'], report_name),
+            config['REPORT_TEMPLATE']
         )
 
 
