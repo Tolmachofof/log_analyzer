@@ -4,7 +4,6 @@ import datetime
 import gzip
 import logging
 import os
-import sys
 import json
 import re
 from collections import defaultdict, namedtuple
@@ -12,7 +11,7 @@ from statistics import median
 
 CONFIG = {
     'LOGS_DIR': './logs',
-    'LOG_NAME_TEMPLATE': 'nginx-sccess-ui.log-{date}',
+    'LOG_NAME_TEMPLATE': 'nginx-access-ui.log-{date}',
     'LOG_DATE_FORMAT': '%Y%m%d',
     'REPORTS_DIR': './reports',
     'REPORT_NAME_TEMPLATE': 'report-{date}.html',
@@ -61,12 +60,13 @@ def parse_config(config_path):
     config_parser = configparser.ConfigParser(defaults=CONFIG)
     config_parser.read(config_path)
     config = {
-        config_parser['DEFAULT'].get(option, raw=True) for option in CONFIG
+        option: config_parser['DEFAULT'].get(option, raw=True)
+        for option in CONFIG
     }
     if config_parser.has_section(CONFIG_SECTION):
         config.update(
             {
-                config_parser[CONFIG_SECTION].get(option, raw=True)
+                option: config_parser[CONFIG_SECTION].get(option, raw=True)
                 for option in CONFIG
             }
         )
@@ -84,6 +84,10 @@ def set_logging_settings(log_level, filename=None):
 
 def _fetch_date_from_file_name(file_name, template, date_format):
     try:
+        file_name = (
+            file_name if not file_name.endswith('.gz')
+            else os.path.splitext(file_name)[0]
+        )
         return datetime.datetime.strptime(
             file_name,
             template.format(date=date_format),
@@ -109,7 +113,7 @@ def get_last_log(logs_dir, log_template, date_format):
         )
     except ValueError:
         logging.info(
-            'Log files matching pattern do not exist in directory: {}'.format(
+            'Log files matching template do not exist in directory: {}'.format(
                 logs_dir
             )
         )
@@ -117,9 +121,9 @@ def get_last_log(logs_dir, log_template, date_format):
 
 def read_file(path):
     fopen = gzip.open if path.endswith('.gz') else open
-    with fopen(path) as f:
-        for line in f.read():
-            yield line
+    with fopen(path, 'rb') as f:
+        for line in f:
+            yield line.decode('utf-8')
 
 
 def parse_line(line, pattern):
@@ -133,6 +137,7 @@ def parse_line(line, pattern):
 def summarize_report(
         report, total_requests, total_requests_time, size, accuracy
 ):
+    print(type(report))
     for url_report in sorted(report, key=lambda item: item['time_sum'])[size]:
         url_requests = url_report.pop('requests')
         url_report.update(
@@ -185,12 +190,13 @@ def create_report(file_path, pattern, report_size, accuracy):
 def render_report(report, report_path, template_path):
     with open(template_path, 'r') as tp, open(report_path, 'w') as rp:
         template = tp.read()
+        template = template.replace('$table_json', report)
         rp.write(template.format(json.dumps(report)))
 
 
 def main(config):
     log_for_analyze = get_last_log(
-        config['LOGS_DIR'], config['LOG_NAME_PATTERN'],
+        config['LOGS_DIR'], config['LOG_NAME_TEMPLATE'],
         config['LOG_DATE_FORMAT']
     )
     # Shutdown if the logs dir does not contain logs
@@ -208,8 +214,8 @@ def main(config):
         return
     report = create_report(
         os.path.join(config['LOGS_DIR'], log_for_analyze.log_name),
-        config['LOG_NAME_TEMPLATE'], config['REPORT_SIZE'],
-        config['REPORT_ACCURACY']
+        LOG_LINE_PATTERN, int(config['REPORT_SIZE']),
+        int(config['REPORT_ACCURACY'])
     )
     errors_percent = round(100 * report.total_errors / report.total_requests)
     if errors_percent < config['ERRORS_LIMIT']:
@@ -234,7 +240,7 @@ def main(config):
 if __name__ == '__main__':
     args = parse_args()
     config = parse_config(args.config)
-    set_logging_settings(config['LOG_LEVEL'], config['LOG_FILE'])
+    set_logging_settings(config['LOG_LEVEL'], config.get('LOG_FILE'))
     try:
         start_time = datetime.datetime.now()
         main(config)
