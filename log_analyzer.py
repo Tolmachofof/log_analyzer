@@ -141,7 +141,7 @@ def summarize_report(
 ):
     top_reports_size = size if size < len(report) else len(report)
     top_reports = sorted(
-        report.values(), key=lambda item: item['time_sum']
+        report.values(), key=lambda item: item['time_sum'], reverse=True
     )[:top_reports_size]
     for url_report in top_reports:
         url_requests = url_report.pop('requests')
